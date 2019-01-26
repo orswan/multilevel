@@ -122,9 +122,12 @@ end
 
 #----------------- Bloch dynamics -------------------
 
-
-
-
+function Hmatrix(A::Atom,lasers::Array{Laser,1},B::Array{<:Number,1}=[0.0,0,0])
+	# Returns the matrix for the Hamiltonian given an Atom A, a list of lasers, and a magnetic field B.
+		# Currently does not account for nuclear spin.
+	N = sum([2*L.J+1 for L in Atom.levels])		# Total number of eigenstates, and dimension of the Hamiltonian matrix.
+	
+end
 
 
 
