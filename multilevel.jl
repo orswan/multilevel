@@ -26,7 +26,7 @@ Level(name,s,l,j;energy) = Level(name,s,l,j,0,j,energy)	# Nuclear moment need no
 struct Atom
 	levels::Array{Level,1}				# Levels
 	# Linewidths between each pair of levels:
-		# linewidths[i,j] is the linewidth from i to j.
+		# linewidths[i,j] is the ANGULAR linewidth from i to j.
 		# So if i is lower energy than j, it is 0.
 	linewidths::Array{Float64,2}
 	lambda::Array{Float64,2}				# Vacuum wavelength connecting any pair of states
@@ -82,16 +82,48 @@ Sr88_linewidths = [0 0 0 0 0 0 ;				# Decay channels from the ground state (none
 Sr88 = Atom([Sr88_1S0,Sr88_1P1,Sr88_3P0,Sr88_3P1,Sr88_3P0,Sr88_3S1],Sr88_linewidths)
 
 struct Laser
-	k::Array{Number,1}					# k vector
-	polarization::Array{Number,1}			# Polarization vector
+	# For numerical stability, you should specify the k-vector only nominally, and specify the detuning separately.
+	I::Number							# Intensity
+	polarization::Array{Float64,1}			# Polarization vector (length gets scaled to 1 below)
+	k::Array{Float64,1}					# k vector
 	n::Number							# Index of refraction of ambient medium
+	detuning::Number						# Detuning
 	f::Number							# Frequency
 	lambda::Number						# Wavelength
-	Laser(k,p,n,f,l) = new(k,p,n,norm(k)*c/(2pi*n),2pi/norm(k))
+	Laser(I::Number,p::Array{Float64,1},k::Array{Float64,1},n::Number,detuning::Number) = 
+		new(I,p/norm(p),k,n,detuning,norm(k)*c/(2pi*n),2pi/norm(k))
 end
 
-#struct Field							# The field is just a vector, so it probably doesn't need its own struct.
-#end
+function Laser(intensity::Number,polarization::Array{<:Number,1};
+					khat::Array{<:Number,1}=[1.0,0,0], f::Number, detuning::Number=0.0, n::Number=1.0)
+	if f==nothing
+		throw(ArgumentError("f or k must be specified."))
+	else
+		return Laser(intensity,convert(Array{Float64,1},polarization),khat*f*n*2pi,1.0,detuning)
+	end
+end
+
+function Laser(A::Atom, ground::Level, excited::Level,
+				saturation::Number, polarization::Array{<:Number,1}, detuning::Number, khat=[1.0,0,0], n=1.0)
+	# Generates a laser using parameters of an atomic transition between "ground" and "excited" Levels.  
+	# saturation specifies the laser intensity in units of the saturation intensity.
+	# detuning specifies the laser frequency relative to the transition frequency, in units of linewidths.
+	i = findfirst(x->x==ground,A.levels)
+	j = findfirst(x->x==excited,A.levels)
+	return Laser(saturation*Isat(A,ground,excited), polarization, khat=khat, f=c/A.lambda[j,i], n=n, detuning=detuning)
+end
+
+function Isat(A::Atom,ground::Level,excited::Level)
+	# Returns the saturation intensity of the transition between "ground" and "excited" Levels.
+	i = findfirst(x->x==ground,A.levels)
+	j = findfirst(x->x==excited,A.levels)
+	return (pi/3) * h*c*A.linewidths[j,i]/A.lambda[j,i]^3
+end
+
+#----------------- Bloch dynamics -------------------
+
+
+
 
 
 
