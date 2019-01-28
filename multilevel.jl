@@ -4,10 +4,38 @@
 module multilevel
 using LinearAlgebra#,DifferentialEquations
 
+#------------------------ Units --------------------------
+
 h = 1
 c = 1
 hbar = h/2pi
+function unitConvert(s::String,baseUnits,targetUnits)
+	# Converts a dimension given as s from baseUnits to targetUnits.
+		# Symbols in the string should be delimited by spaces.
+		# HACKY....
+	SI_h = 6.626176e-34
+	SI_hbar = SI_h/2pi
+	SI_c = 299792458 
+	pref = Dict(""=>1, "c"=>.01, "m"=>.001, "u"=>1e-6, "n"=>1e-9, "k"=>1000, "M"=>1e6, "G"=>1e9)
+	if (baseUnits==:SI) & (targetUnits==:natural)
+		ex = 1
+		out = 1
+		for i in split(s,' ')
+			if i[end]=='s'
+				out = out*pref[i[1:end-1]]^ex
+			elseif i[end]=='m'
+				out = out*(pref[i[1:end-1]]/SI_c)^ex
+			elseif i[end]=='g'
+				throw(ArgumentError,"mass not implemented in unit conversion yet")
+			elseif i[end]=='/'
+				ex = -1
+			end
+		end
+		return out
+	end
+end
 
+#--------------------- Structs -----------------------
 struct Level
 	name::String
 	S::Number				# Spin angular momentum
@@ -77,7 +105,8 @@ Sr88_linewidths = [0 0 0 0 0 0 ;				# Decay channels from the ground state (none
 				1/157 0 0 0 0 0 ;			# ... from 3P0
 				4.6911e4 0 0 0 0 0;			# ... from 3P1
 				0 0 0 0 0 0;				# ... from 3P2
-				0 0  8.98e6 2.7e7 4.2e7 0;]	# ... from 3S1
+				0 0  8.98e6 2.7e7 4.2e7 0;]*	# ... from 3S1
+				unitConvert("s / nm",:SI,:natural)
 
 Sr88 = Atom([Sr88_1S0,Sr88_1P1,Sr88_3P0,Sr88_3P1,Sr88_3P0,Sr88_3S1],Sr88_linewidths)
 
@@ -113,6 +142,8 @@ function Laser(A::Atom, ground::Level, excited::Level,
 	return Laser(saturation*Isat(A,ground,excited), polarization, khat=khat, f=c/A.lambda[j,i], n=n, detuning=detuning)
 end
 
+#----------------- Utility -------------------------
+
 function Isat(A::Atom,ground::Level,excited::Level)
 	# Returns the saturation intensity of the transition between "ground" and "excited" Levels.
 	i = findfirst(x->x==ground,A.levels)
@@ -120,13 +151,26 @@ function Isat(A::Atom,ground::Level,excited::Level)
 	return (pi/3) * h*c*A.linewidths[j,i]/A.lambda[j,i]^3
 end
 
+function Lande(L::Level)
+	# Lande g-factor for a level l.
+	return 3/2 + (L.S*(L.S+1) - L.L*(L.L+1))/(2*L.J*(L.J+1))
+end
+
 #----------------- Bloch dynamics -------------------
 
-function Hmatrix(A::Atom,lasers::Array{Laser,1},B::Array{<:Number,1}=[0.0,0,0])
+function RabiH(A::Atom,lasers::Array{Laser,1},B::Array{<:Number,1}=[0.0,0,0])
 	# Returns the matrix for the Hamiltonian given an Atom A, a list of lasers, and a magnetic field B.
+		# Assumes that near detuned lasers are all that is relevant, so this captures a generalized Rabi system.
+		# Currently only allows for one laser for any given transition. 
 		# Currently does not account for nuclear spin.
-	N = sum([2*L.J+1 for L in Atom.levels])		# Total number of eigenstates, and dimension of the Hamiltonian matrix.
+	Jdims = [2*L.J+1 for L in Atom.levels]
+	Jfins = cumsum(Jdims)
+	N = Jfins[end]		# Total number of eigenstates, and dimension of the Hamiltonian matrix.
+	H = zeros(N,N)
 	
+	for L in lasers
+		
+	end
 end
 
 
