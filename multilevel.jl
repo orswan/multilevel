@@ -176,6 +176,10 @@ function dipole(A::Atom,ground:Level,excited::Level;gm=nothing,em=nothing)
 	return d
 end
 
+function proj(p::Array{<:Number,1},B::Array{<:Number,1},q::Number)
+	# 
+end
+
 #----------------- Bloch dynamics -------------------
 
 function RabiH(A::Atom,lasers::Array{Laser,1},B::Array{<:Number,1}=[0.0,0,0])
@@ -185,12 +189,21 @@ function RabiH(A::Atom,lasers::Array{Laser,1},B::Array{<:Number,1}=[0.0,0,0])
 		# Currently does not account for nuclear spin.
 	Jdims = [2*L.J+1 for L in Atom.levels]
 	Jfins = cumsum(Jdims)
-	N = Jfins[end]		# Total number of eigenstates, and dimension of the Hamiltonian matrix.
-	H = zeros(N,N)
+	Jstarts = Jfins-Jdims+1
+	N = Jfins[end]					# Total number of eigenstates, and dimension of the Hamiltonian matrix.
+	H = zeros(N,N)					# Hamiltonian matrix
 	
-	for L in lasers
+	for L in lasers													# We add terms to the Hamiltonian laser by laser
 		idx = findmin(abs.(A.lambda-L.lambda))[2]
-		
+		gidx = idx[1]												# Ground state index in A
+		eidx = idx[2]												# Excited state index in A
+		for g = Jstarts[gidx]:Jfins[gidx]							# Run over all ground m levels
+			gm = g - Jstarts[gidx] - A.levels[gidx].J				# Ground state m level
+			for e = Jstarts[eidx]:Jfins[eidx]						# Run over all excited m levels
+				em = e - Jstarts[eidx] - A.levels[eidx].J			# Excited state m level
+				H[g,e] = H[g,e] + dipole(A,A.levels[gidx],A.levels[eidx],gm=gm,em=em) * proj(L.polarization,B,em-gm)
+			end
+		end
 	end
 end
 
