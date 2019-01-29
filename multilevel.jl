@@ -3,12 +3,15 @@
 # We use units with hbar=c=1
 module multilevel
 using LinearAlgebra#,DifferentialEquations
+using WignerSymbols
 
 #------------------------ Units --------------------------
 
 h = 1
 c = 1
 hbar = h/2pi
+eps0 = 1
+
 function unitConvert(s::String,baseUnits,targetUnits)
 	# Converts a dimension given as s from baseUnits to targetUnits.
 		# Symbols in the string should be delimited by spaces.
@@ -156,6 +159,23 @@ function Lande(L::Level)
 	return 3/2 + (L.S*(L.S+1) - L.L*(L.L+1))/(2*L.J*(L.J+1))
 end
 
+function dipole(A::Atom,ground:Level,excited::Level;gm=nothing,em=nothing)
+	# Computes dipole matrix element between ground and excited states.
+		# Computes for given m states if provided.  Otherwise returns the Wigner-Eckart matrix element.
+		# Currently doesn't work for half integers.
+	i = findfirst(x->x==ground,A.levels)
+	j = findfirst(x->x==excited,A.levels)
+	d = sqrt(hbar * eps0 * A.lambda[i,j]^3 * A.linewidth[j,i])/2pi
+	if !(gm==nothing) & !(em==nothing)
+		if (abs(gm-em)<=1)
+			d = d * clebschgordan(ground.J,gm,1,ge-gm,excited.J,ge)
+		else		# This could be made more efficient by putting the switch before the initial computation of d. #######
+			d = 0
+		end
+	end
+	return d
+end
+
 #----------------- Bloch dynamics -------------------
 
 function RabiH(A::Atom,lasers::Array{Laser,1},B::Array{<:Number,1}=[0.0,0,0])
@@ -169,6 +189,7 @@ function RabiH(A::Atom,lasers::Array{Laser,1},B::Array{<:Number,1}=[0.0,0,0])
 	H = zeros(N,N)
 	
 	for L in lasers
+		idx = findmin(abs.(A.lambda-L.lambda))[2]
 		
 	end
 end
