@@ -7,10 +7,15 @@ using WignerSymbols
 
 #------------------------ Units --------------------------
 
-h = 1
-c = 1
-hbar = h/2pi
-eps0 = 1
+"""
+The units I would like to use are such that h=c=1, 
+a unit magnetic field generates a unit energy for a Bohr magneton.
+"""
+
+const h = 1
+const c = 1
+const hbar = h/2pi
+const muB = 1
 
 function unitConvert(s::String,baseUnits,targetUnits)
 	# Converts a dimension given as s from baseUnits to targetUnits.
@@ -112,8 +117,9 @@ Sr88_linewidths = [0 0 0 0 0 0 ;				# Decay channels from the ground state (none
 				unitConvert("s / nm",:SI,:natural)
 
 Sr88 = Atom([Sr88_1S0,Sr88_1P1,Sr88_3P0,Sr88_3P1,Sr88_3P0,Sr88_3S1],Sr88_linewidths)
+Sr88_689 = Atom(Sr88,[Sr88_1S0,Sr88_3P1])
 
-struct Laser
+mutable struct Laser
 	# For numerical stability, you should specify the k-vector only nominally, and specify the detuning separately.
 	I::Number							# Intensity
 	polarization::Array{Float64,1}			# Polarization vector (length gets scaled to 1 below)
@@ -145,6 +151,14 @@ function Laser(A::Atom, ground::Level, excited::Level,
 	return Laser(saturation*Isat(A,ground,excited), polarization, khat=khat, f=c/A.lambda[j,i], n=n, detuning=detuning)
 end
 
+function Base.show(io::IO, L::Laser)
+	println("lambda: \t",L.lambda)
+	println("Detuning: \t",L.detuning)
+	println("Intensity: \t",L.I)
+	println("Polarization: \t",L.polarization)
+end
+
+
 #----------------- Utility -------------------------
 
 function Isat(A::Atom,ground::Level,excited::Level)
@@ -159,21 +173,9 @@ function Lande(L::Level)
 	return 3/2 + (L.S*(L.S+1) - L.L*(L.L+1))/(2*L.J*(L.J+1))
 end
 
-function dipole(A::Atom,ground:Level,excited::Level;gm=nothing,em=nothing)
-	# Computes dipole matrix element between ground and excited states.
-		# Computes for given m states if provided.  Otherwise returns the Wigner-Eckart matrix element.
-		# Currently doesn't work for half integers.
-	i = findfirst(x->x==ground,A.levels)
-	j = findfirst(x->x==excited,A.levels)
-	d = sqrt(hbar * eps0 * A.lambda[i,j]^3 * A.linewidth[j,i])/2pi
-	if !(gm==nothing) & !(em==nothing)
-		if (abs(gm-em)<=1)
-			d = d * clebschgordan(ground.J,gm,1,ge-gm,excited.J,ge)
-		else		# This could be made more efficient by putting the switch before the initial computation of d. #######
-			d = 0
-		end
-	end
-	return d
+function magMoment(ground::Level,gm::Number,excited::Level,em::Number)
+	# Computes magnetic moment between two levels.
+	return em*Lande(excited) - gm*Lande(ground)
 end
 
 function sphericalBasis(axis::Array{<:Number,1})
@@ -184,17 +186,39 @@ function sphericalBasis(axis::Array{<:Number,1})
 	if size(axis)!=(3,)
 		throw(ArgumentError,"axis must have shape (3,)")
 	end
-	if axis==[0,0,1]
+	if axis/norm(axis)==[0,0,1]
 		return [1/sqrt(2) 0 1/sqrt(2);im/sqrt(2) 0 -im/sqrt(2); 0 1 0]
 	else
-		v = axis-[0,0,1]
-		v = v/norm(v)
-		z = [
+		v = axis/norm(axis)-[0,0,1]			# This will be the normal to the plane of reflection
+		v = v/norm(v)							# Normalize
+		xyz = LinearAlgebra.I - 2v*v'			# xyz[:,i] is the reflected e_i unit vector
+		# Note that xyz[:,1] is a reflected e_1, so to get a right handed coordinate system, we should use 
+			# xyz[:,2] as x, xyz[:,1] as y, and xyz[:,3] as z.
+		return [(xyz[:,2]-im*xyz[:,1])/sqrt(2) xyz[:,3] (xyz[:,2]+im*xyz[:,1])/sqrt(2)]
 	end
 end
 
 function proj(p::Array{<:Number,1},B::Array{<:Number,1},q::Number)
-	# 
+	# Projects p onto the spherical basis element q with axis B, where q=\pm 1 is sigma\pm and q=0 is pi.
+	return dot(p,conj(sphericalBasis(B)[:,2+q]))
+end
+
+function RabiFreq(A::Atom,ground::Level,excited::Level,L::Laser,B::Array{<:Number,1};gm=nothing,em=nothing)
+	# Computes Rabi frequency between ground and excited states from a given laser L.
+		# Computes for given m states if provided.  Otherwise returns the Wigner-Eckart matrix element.
+		# Currently doesn't work for half integers.
+	i = findfirst(x->x==ground,A.levels)
+	j = findfirst(x->x==excited,A.levels)
+	Omega = sqrt(A.linewidths[j,i]^2 * L.I/(Isat(A,ground,excited)*2))
+	if !(gm==nothing) & !(em==nothing)
+		if (abs(gm-em)<=1)
+			# TODO: Figure out which way the Clebsch-Gordan coefficients should go. ###############################
+			Omega = Omega * clebschgordan(ground.J,gm,1,em-gm,excited.J,em) * proj(L.polarization,B,em-gm)
+		else			# If the difference in m states is not in {-1,0,1}, then the dipole matrix element is zero.
+			Omega = 0
+		end
+	end
+	return Omega
 end
 
 #----------------- Bloch dynamics -------------------
@@ -204,24 +228,35 @@ function RabiH(A::Atom,lasers::Array{Laser,1},B::Array{<:Number,1}=[0.0,0,0])
 		# Assumes that near detuned lasers are all that is relevant, so this captures a generalized Rabi system.
 		# Currently only allows for one laser for any given transition. 
 		# Currently does not account for nuclear spin.
-	Jdims = [2*L.J+1 for L in Atom.levels]
+	Jdims = [2*L.J+1 for L in A.levels]
 	Jfins = cumsum(Jdims)
-	Jstarts = Jfins-Jdims+1
+	Jstarts = Jfins .- Jdims .+ 1
 	N = Jfins[end]					# Total number of eigenstates, and dimension of the Hamiltonian matrix.
 	H = zeros(N,N)					# Hamiltonian matrix
+	b = norm(B)						# Magnitude of B field
 	
-	for L in lasers													# We add terms to the Hamiltonian laser by laser
-		idx = findmin(abs.(A.lambda-L.lambda))[2]
-		gidx = idx[1]												# Ground state index in A
-		eidx = idx[2]												# Excited state index in A
+	for L in lasers											# We add terms to the Hamiltonian laser by laser
+		detuning = L.detuning									# Detuning of the laser from the transition
+		idx = findmin(abs.(A.lambda .- L.lambda))[2]				# Index of transition closest to laser wavelength
+		gidx = idx[1]											# Ground state index in A
+		ground = A.levels[gidx]								# Ground state
+		eidx = idx[2]											# Excited state index in A
+		excited = A.levels[eidx]								# Excited state
+		
 		for g = Jstarts[gidx]:Jfins[gidx]							# Run over all ground m levels
-			gm = g - Jstarts[gidx] - A.levels[gidx].J				# Ground state m level
+			gm = g .- Jstarts[gidx] .- A.levels[gidx].J				# Ground state m level
 			for e = Jstarts[eidx]:Jfins[eidx]						# Run over all excited m levels
-				em = e - Jstarts[eidx] - A.levels[eidx].J			# Excited state m level
-				H[g,e] = H[g,e] + dipole(A,A.levels[gidx],A.levels[eidx],gm=gm,em=em) * proj(L.polarization,B,em-gm)
+				em = e .- Jstarts[eidx] .- A.levels[eidx].J			# Excited state m level
+				Omega = RabiFreq(A,ground,excited,L,B,gm=gm,em=em)	# Rabi angular frequency
+				println("HI")
+				H[g,e] = H[g,e] .+ hbar * Omega / 2				# Above diagonal
+				println("HI")
+				H[e,g] = H[e,g] .+ hbar * conj(Omega) / 2			# Below diagonal
+				H[e,e] = H[e,e] .- hbar * detuning .- magMoment(ground,gm,excited,em) * b	# Diagonal
 			end
 		end
 	end
+	return H
 end
 
 
