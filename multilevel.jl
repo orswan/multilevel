@@ -57,7 +57,7 @@ struct Level
 end
 
 Level(name,s,l,j,i,f) = Level(name,s,l,j,i,f,nothing)		# Energy need not be specified
-Level(name,s,l,j;energy) = Level(name,s,l,j,0,j,energy)	# Nuclear moment need not be specified
+Level(name,s,l,j;energy) = Level(name,s,l,j,0,j,energy)		# Nuclear moment need not be specified
 
 struct Atom
 	levels::Array{Level,1}				# Levels
@@ -65,7 +65,7 @@ struct Atom
 		# linewidths[i,j] is the ANGULAR linewidth from i to j.
 		# So if i is lower energy than j, it is 0.
 	linewidths::Array{Float64,2}
-	lambda::Array{Float64,2}				# Vacuum wavelength connecting any pair of states
+	lambda::Array{Float64,2}			# Vacuum wavelength connecting any pair of states
 end
 
 function Atom(levels::Array{Level,1},linewidths::Array{<:Number,2})
@@ -99,25 +99,6 @@ function Base.show(io::IO, A::Atom)
 		end
 	end
 end
-
-# We'll build the relevant parts of Sr88 now:
-Sr88_1S0 = Level("1S0",0,0,0,energy=0.0)
-Sr88_1P1 = Level("1P1",0,1,1,energy=21698.452e-7)
-Sr88_3P0 = Level("3P0",1,1,0,energy=14317.507e-7)
-Sr88_3P1 = Level("3P1",1,1,1,energy=14504.334e-7)
-Sr88_3P2 = Level("3P2",1,1,2,energy=14898.545e-7)
-Sr88_3S1 = Level("3S1",1,0,1,energy=29038.773e-7)
-
-Sr88_linewidths = [0 0 0 0 0 0 ;				# Decay channels from the ground state (none)
-				2.01e8 0 0 0 0 0;			# ... from 1P1
-				1/157 0 0 0 0 0 ;			# ... from 3P0
-				4.6911e4 0 0 0 0 0;			# ... from 3P1
-				0 0 0 0 0 0;				# ... from 3P2
-				0 0  8.98e6 2.7e7 4.2e7 0;]*	# ... from 3S1
-				unitConvert("s / nm",:SI,:natural)
-
-Sr88 = Atom([Sr88_1S0,Sr88_1P1,Sr88_3P0,Sr88_3P1,Sr88_3P0,Sr88_3S1],Sr88_linewidths)
-Sr88_689 = Atom(Sr88,[Sr88_1S0,Sr88_3P1])
 
 mutable struct Laser
 	# For numerical stability, you should specify the k-vector only nominally, and specify the detuning separately.
@@ -158,6 +139,25 @@ function Base.show(io::IO, L::Laser)
 	println("Polarization: \t",L.polarization)
 end
 
+#----------------- Strontium -----------------------
+
+Sr88_1S0 = Level("1S0",0,0,0,energy=0.0)
+Sr88_1P1 = Level("1P1",0,1,1,energy=21698.452e-7)
+Sr88_3P0 = Level("3P0",1,1,0,energy=14317.507e-7)
+Sr88_3P1 = Level("3P1",1,1,1,energy=14504.334e-7)
+Sr88_3P2 = Level("3P2",1,1,2,energy=14898.545e-7)
+Sr88_3S1 = Level("3S1",1,0,1,energy=29038.773e-7)
+
+Sr88_linewidths = [0 0 0 0 0 0 ;				# Decay channels from the ground state (none)
+				2.01e8 0 0 0 0 0;				# ... from 1P1
+				1/157 0 0 0 0 0 ;				# ... from 3P0
+				4.6911e4 0 0 0 0 0;				# ... from 3P1
+				0 0 0 0 0 0;					# ... from 3P2
+				0 0  8.98e6 2.7e7 4.2e7 0;]*	# ... from 3S1
+				unitConvert("s / nm",:SI,:natural)
+
+Sr88 = Atom([Sr88_1S0,Sr88_1P1,Sr88_3P0,Sr88_3P1,Sr88_3P0,Sr88_3S1],Sr88_linewidths)
+Sr88_689 = Atom(Sr88,[Sr88_1S0,Sr88_3P1])
 
 #----------------- Utility -------------------------
 
@@ -165,12 +165,19 @@ function Isat(A::Atom,ground::Level,excited::Level)
 	# Returns the saturation intensity of the transition between "ground" and "excited" Levels.
 	i = findfirst(x->x==ground,A.levels)
 	j = findfirst(x->x==excited,A.levels)
+	if A.linewidths[j,i]==0
+		println("WARNING: Linewidth zero encountered.  You may have mixed up your ground and excited states.")
+	end
 	return (pi/3) * h*c*A.linewidths[j,i]/A.lambda[j,i]^3
 end
 
 function Lande(L::Level)
-	# Lande g-factor for a level l.
-	return 3/2 + (L.S*(L.S+1) - L.L*(L.L+1))/(2*L.J*(L.J+1))
+	# Lande g-factor for a level L.
+	if L.J==0
+		return 0
+	else
+		return 3/2 + (L.S*(L.S+1) - L.L*(L.L+1))/(2*L.J*(L.J+1))
+	end
 end
 
 function magMoment(ground::Level,gm::Number,excited::Level,em::Number)
@@ -198,12 +205,12 @@ function sphericalBasis(axis::Array{<:Number,1})
 	end
 end
 
-function proj(p::Array{<:Number,1},B::Array{<:Number,1},q::Number)
+function proj(p::Array{<:Number,1},Bhat::Array{<:Number,1},q::Number)
 	# Projects p onto the spherical basis element q with axis B, where q=\pm 1 is sigma\pm and q=0 is pi.
-	return dot(p,conj(sphericalBasis(B)[:,2+q]))
+	return dot(p,conj(sphericalBasis(Bhat)[:,2+q]))
 end
 
-function RabiFreq(A::Atom,ground::Level,excited::Level,L::Laser,B::Array{<:Number,1};gm=nothing,em=nothing)
+function RabiFreq(A::Atom,ground::Level,excited::Level,L::Laser,Bhat::Array{<:Number,1};gm=nothing,em=nothing)
 	# Computes Rabi frequency between ground and excited states from a given laser L.
 		# Computes for given m states if provided.  Otherwise returns the Wigner-Eckart matrix element.
 		# Currently doesn't work for half integers.
@@ -213,7 +220,7 @@ function RabiFreq(A::Atom,ground::Level,excited::Level,L::Laser,B::Array{<:Numbe
 	if !(gm==nothing) & !(em==nothing)
 		if (abs(gm-em)<=1)
 			# TODO: Figure out which way the Clebsch-Gordan coefficients should go. ###############################
-			Omega = Omega * clebschgordan(ground.J,gm,1,em-gm,excited.J,em) * proj(L.polarization,B,em-gm)
+			Omega = Omega * clebschgordan(ground.J,gm,1,em-gm,excited.J,em) * proj(L.polarization,Bhat,em-gm)
 		else			# If the difference in m states is not in {-1,0,1}, then the dipole matrix element is zero.
 			Omega = 0
 		end
@@ -223,7 +230,7 @@ end
 
 #----------------- Bloch dynamics -------------------
 
-function RabiH(A::Atom,lasers::Array{Laser,1},B::Array{<:Number,1}=[0.0,0,0])
+function RabiH(A::Atom,lasers::Array{Laser,1},B::Array{<:Number,1}=[0.0,0,0];Bhat=nothing)
 	# Returns the matrix for the Hamiltonian given an Atom A, a list of lasers, and a magnetic field B.
 		# Assumes that near detuned lasers are all that is relevant, so this captures a generalized Rabi system.
 		# Currently only allows for one laser for any given transition. 
@@ -233,24 +240,30 @@ function RabiH(A::Atom,lasers::Array{Laser,1},B::Array{<:Number,1}=[0.0,0,0])
 	Jstarts = Jfins .- Jdims .+ 1
 	N = Jfins[end]					# Total number of eigenstates, and dimension of the Hamiltonian matrix.
 	H = zeros(N,N)					# Hamiltonian matrix
-	b = norm(B)						# Magnitude of B field
+	b = norm(B)						# Magnitude of B
+	if Bhat==nothing
+		Bhat = (b==0 ? [0,0,1] : B/b)	# Direction of B
+	end
 	
-	for L in lasers											# We add terms to the Hamiltonian laser by laser
+	for L in lasers												# We add terms to the Hamiltonian laser by laser
 		detuning = L.detuning									# Detuning of the laser from the transition
-		idx = findmin(abs.(A.lambda .- L.lambda))[2]				# Index of transition closest to laser wavelength
-		gidx = idx[1]											# Ground state index in A
-		ground = A.levels[gidx]								# Ground state
-		eidx = idx[2]											# Excited state index in A
+		idx = findmin(abs.(A.lambda .- L.lambda))[2]			# Index of transition closest to laser wavelength
+		if A.linewidths[idx]==0									# This means idx[1] is the ground state
+			gidx = idx[1]										# Ground state index in A
+			eidx = idx[2]										# Excited state index in A
+		else
+			gidx = idx[2]
+			eidx = idx[1]
+		end
+		ground = A.levels[gidx]									# Ground state
 		excited = A.levels[eidx]								# Excited state
 		
 		for g = Jstarts[gidx]:Jfins[gidx]							# Run over all ground m levels
 			gm = g .- Jstarts[gidx] .- A.levels[gidx].J				# Ground state m level
 			for e = Jstarts[eidx]:Jfins[eidx]						# Run over all excited m levels
 				em = e .- Jstarts[eidx] .- A.levels[eidx].J			# Excited state m level
-				Omega = RabiFreq(A,ground,excited,L,B,gm=gm,em=em)	# Rabi angular frequency
-				println("HI")
-				H[g,e] = H[g,e] .+ hbar * Omega / 2				# Above diagonal
-				println("HI")
+				Omega = RabiFreq(A,ground,excited,L,Bhat,gm=gm,em=em)	# Rabi angular frequency
+				H[g,e] = H[g,e] .+ hbar * Omega / 2					# Above diagonal
 				H[e,g] = H[e,g] .+ hbar * conj(Omega) / 2			# Below diagonal
 				H[e,e] = H[e,e] .- hbar * detuning .- magMoment(ground,gm,excited,em) * b	# Diagonal
 			end
